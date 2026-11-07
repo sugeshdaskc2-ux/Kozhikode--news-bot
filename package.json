@@ -1,0 +1,17 @@
+{
+  "name": "kozhikode-news-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Malayalam Kozhikode local news collector",
+  "main": "fetch-news.js",
+  "scripts": {
+    "start": "node fetch-news.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.4.0",
+    "fast-xml-parser": "^5.2.5"
+  }
+}
