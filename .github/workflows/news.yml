@@ -10,23 +10,23 @@ permissions:
 
 jobs:
   fetch-news:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: '22'
-          package-manager-cache: false
 
       - name: Install dependencies
-        run: npm install
+        run: npm install firebase-admin fast-xml-parser
 
       - name: Fetch Malayalam news
         run: node fetch-news.js
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          CURRENTS_API_KEY: ${{ secrets.CURRENTS_API_KEY }}
