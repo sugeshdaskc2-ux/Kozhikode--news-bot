@@ -4,6 +4,7 @@ const admin = require('firebase-admin');
 const { XMLParser } = require('fast-xml-parser');
 const crypto = require('crypto');
 
+// Firebase Connection
 if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
   throw new Error('FIREBASE_SERVICE_ACCOUNT Secret missing!');
 }
@@ -12,14 +13,15 @@ const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 
-// കൂടുതൽ വിശ്വസനീയമായ RSS ലിങ്കുകൾ
+// RSS Feeds (Manorama & Mathrubhumi)
 const FEEDS = [
-  { name: 'Manorama Online', url: 'https://www.manoramaonline.com/news/latest-news.rss' },
-  { name: 'Mathrubhumi Kozhikode', url: 'https://www.mathrubhumi.com/rss/district/kozhikode' }
+  { name: 'Manorama Online', url: 'https://www.manoramaonline.com/rss/latest-news.xml' },
+  { name: 'Mathrubhumi', url: 'https://www.mathrubhumi.com/rss/news/kerala' }
 ];
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_', trimValues: true });
 
+// HTML ടാഗുകൾ നീക്കം ചെയ്യാനും ടെക്സ്റ്റ് വൃത്തിയാക്കാനും
 function cleanText(value) {
   if (!value) return '';
   return String(value)
@@ -45,11 +47,14 @@ async function fetchFeed(feed) {
 
   try {
     const response = await fetch(feed.url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      signal: AbortSignal.timeout(20000)
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(20000) // 20 സെക്കൻഡ് ടൈം ഔട്ട്
     });
 
-    if (!response.ok) throw new Error(`RSS error: HTTP ${response.status}`);
+    if (!response.ok) {
+       console.log(`Failed to fetch ${feed.name}, HTTP Status: ${response.status}`);
+       return;
+    }
 
     const xml = await response.text();
     const data = parser.parse(xml);
@@ -58,27 +63,40 @@ async function fetchFeed(feed) {
     let saved = 0;
     let skipped = 0;
     
-    // 📌 കൃത്യമായി 48 മണിക്കൂർ (2 ദിവസം) മുൻപുള്ള സമയം കണക്കാക്കുന്നു
+    // 📌 48 മണിക്കൂർ മുൻപുള്ള സമയം
     const fortyEightHoursAgo = new Date(Date.now() - (48 * 60 * 60 * 1000));
 
     for (const item of items) {
       const title = cleanText(item.title);
       const url = cleanText(item.link);
+      
+      // ടൈറ്റിലോ ലിങ്കോ ഇല്ലെങ്കിൽ ഒഴിവാക്കുക
       if (!title || !url.startsWith('https://')) continue;
 
-      const date = item.pubDate ? new Date(item.pubDate) : new Date();
+      // 📌 FIX 2: pubDate ഇല്ലാത്ത വാർത്തകൾ ഒഴിവാക്കുക (പഴയ വാർത്ത പുതിയതായി വരാതിരിക്കാൻ)
+      if (!item.pubDate) {
+        skipped++;
+        continue;
+      }
+
+      const date = new Date(item.pubDate);
       
-      // 48 മണിക്കൂറിൽ പഴയ വാർത്തകൾ ഒഴിവാക്കുന്നു
-      if (!isNaN(date.getTime()) && date < fortyEightHoursAgo) {
+      // 📌 FIX 2: തീയതി ശരിയല്ലെങ്കിലോ 48 മണിക്കൂറിൽ പഴയതാണെങ്കിലോ ഒഴിവാക്കുക
+      if (isNaN(date.getTime()) || date < fortyEightHoursAgo) {
         skipped++;
         continue; 
       }
 
+      // യുണീക്ക് ഐഡി ഉണ്ടാക്കാൻ (Duplicate വരാതിരിക്കാൻ)
       const id = crypto.createHash('sha256').update(url).digest('hex');
+      
       const image = item.enclosure?.['@_url'] || item['media:content']?.['@_url'] || '';
-      const publishedAt = isNaN(date.getTime()) ? admin.firestore.Timestamp.now() : admin.firestore.Timestamp.fromDate(date);
+      
+      // 📌 FIX 1: fromDateTime() അല്ല, fromDate() ആണ് ശരിയായത്
+      const publishedAt = admin.firestore.Timestamp.fromDate(date);
 
-      await db.collection('news').doc(id).set({
+      // 📌 FIX 3: createdAt ഒഴിവാക്കി, fetchedAt മാത്രം അപ്ഡേറ്റ് ചെയ്യുന്നു (merge: true ഉപയോഗിച്ചതിനാൽ)
+      const newsData = {
         title,
         description: cleanText(item.description),
         source: feed.name,
@@ -86,14 +104,26 @@ async function fetchFeed(feed) {
         image,
         district: 'Kozhikode',
         language: 'ml',
+        category: 'local', 
+        isPublished: true, // ആപ്പിൽ കാണാൻ ഇത് നിർബന്ധമാണ്
+        isDeleted: false,
         publishedAt,
         fetchedAt: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
+      };
+
+      // പുതിയ വാർത്തയാണെങ്കിൽ മാത്രം createdAt ചേർക്കുക
+      const docRef = db.collection('news').doc(id);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        newsData.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+
+      await docRef.set(newsData, { merge: true });
 
       saved++;
     }
 
-    console.log(`${feed.name} - Saved: ${saved}, Skipped (Old): ${skipped}`);
+    console.log(`${feed.name} - Saved: ${saved}, Skipped (Old/Invalid): ${skipped}`);
     
   } catch (error) {
     console.error(`Error fetching ${feed.name}:`, error.message);
@@ -111,4 +141,3 @@ main().catch(error => {
   console.error(error);
   process.exitCode = 1;
 });
-    
