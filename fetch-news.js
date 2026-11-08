@@ -31,11 +31,11 @@ const API_KEY = process.env.CURRENTS_API_KEY;
 const HOURS_LIMIT = 48;
 const MAX_ARTICLES = 100;
 
-const cutoffDate = new Date(
-  Date.now() - HOURS_LIMIT * 60 * 60 * 1000
-);
-
 const now = new Date();
+
+const cutoffDate = new Date(
+  now.getTime() - HOURS_LIMIT * 60 * 60 * 1000
+);
 
 // ============================================
 // 3. KOZHIKODE KEYWORDS
@@ -125,7 +125,12 @@ const parser = new XMLParser({
 // ============================================
 
 function cleanText(value) {
+
   if (!value) return '';
+
+  if (typeof value === 'object') {
+    value = value['#text'] || '';
+  }
 
   return String(value)
     .replace(/<!\[CDATA\[|\]\]>/g, '')
@@ -144,11 +149,14 @@ function cleanText(value) {
 // ============================================
 
 function getValidDate(value) {
+
   if (!value) return null;
 
   const date = new Date(value);
 
-  if (isNaN(date.getTime())) return null;
+  if (isNaN(date.getTime())) {
+    return null;
+  }
 
   // Future dates ഒഴിവാക്കുക
   if (date.getTime() > Date.now() + 5 * 60 * 1000) {
@@ -164,18 +172,28 @@ function getValidDate(value) {
 }
 
 // ============================================
-// 7. KOZHIKODE NEWS FILTER
+// 7. MALAYALAM NEWS CHECK
+// ============================================
+
+function isMalayalamNews(article) {
+
+  const text =
+    (article.title || '') + ' ' +
+    (article.description || '');
+
+  return /[\u0D00-\u0D7F]/.test(text);
+}
+
+// ============================================
+// 8. KOZHIKODE NEWS CHECK
 // ============================================
 
 function isKozhikodeNews(article) {
+
   const text = (
     (article.title || '') + ' ' +
     (article.description || '')
   ).toLowerCase();
-
-  const hasMalayalam = /[\u0D00-\u0D7F]/.test(text);
-
-  if (!hasMalayalam) return false;
 
   return KOZHIKODE_KEYWORDS.some(keyword =>
     text.includes(keyword.toLowerCase())
@@ -183,26 +201,36 @@ function isKozhikodeNews(article) {
 }
 
 // ============================================
-// 8. URL VALIDATION
+// 9. URL VALIDATION
 // ============================================
 
 function isValidUrl(value) {
+
   try {
+
     const url = new URL(value);
+
     return url.protocol === 'https:';
+
   } catch {
+
     return false;
+
   }
 }
 
 // ============================================
-// 9. CURRENTS API
+// 10. CURRENTS API
 // ============================================
 
 async function fetchFromCurrentsAPI() {
 
   if (!API_KEY) {
-    console.warn('CURRENTS_API_KEY Secret missing!');
+
+    console.warn(
+      'CURRENTS_API_KEY Secret missing. Skipping Currents API.'
+    );
+
     return [];
   }
 
@@ -210,7 +238,9 @@ async function fetchFromCurrentsAPI() {
 
   const keywords = [
     'കോഴിക്കോട്',
-    'Kozhikode'
+    'Kozhikode',
+    'Kerala',
+    'കേരളം'
   ];
 
   let results = [];
@@ -224,49 +254,78 @@ async function fetchFromCurrentsAPI() {
       );
 
       url.searchParams.set('keywords', keyword);
+
+      url.searchParams.set(
+        'start_date',
+        cutoffDate.toISOString()
+      );
+
+      url.searchParams.set(
+        'end_date',
+        now.toISOString()
+      );
+
       url.searchParams.set('country', 'IN');
-      url.searchParams.set('start_date', cutoffDate.toISOString());
-      url.searchParams.set('end_date', now.toISOString());
+
       url.searchParams.set('page_size', '20');
 
       const response = await fetch(url, {
+
         headers: {
           'Authorization': `Bearer ${API_KEY}`,
           'Accept': 'application/json'
         },
+
         signal: AbortSignal.timeout(20000)
+
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+
+        throw new Error(
+          `HTTP ${response.status}`
+        );
+
       }
 
       const data = await response.json();
 
-      if (data.status !== 'ok' || !Array.isArray(data.news)) {
+      if (
+        data.status !== 'ok' ||
+        !Array.isArray(data.news)
+      ) {
         continue;
       }
 
       const articles = data.news.map(article => ({
+
         title: cleanText(article.title),
+
         url: article.url,
+
         pubDate: article.published,
+
         image: article.image || '',
+
         description: cleanText(article.description),
+
         source: article.author || 'Currents API'
+
       }));
 
       results = results.concat(articles);
 
       console.log(
-        `Currents keyword "${keyword}": ${articles.length} articles`
+        `Currents "${keyword}": ${articles.length} articles`
       );
 
     } catch (error) {
+
       console.error(
-        `Currents API Error (${keyword}):`,
+        `Currents Error (${keyword}):`,
         error.message
       );
+
     }
   }
 
@@ -274,7 +333,7 @@ async function fetchFromCurrentsAPI() {
 }
 
 // ============================================
-// 10. RSS FETCH
+// 11. RSS FETCH
 // ============================================
 
 async function fetchFromRSS(feed) {
@@ -284,59 +343,91 @@ async function fetchFromRSS(feed) {
   try {
 
     const response = await fetch(feed.url, {
+
       headers: {
         'User-Agent': 'Mozilla/5.0 KozhikodeNewsBot/1.0'
       },
+
       signal: AbortSignal.timeout(20000)
+
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+
+      throw new Error(
+        `HTTP ${response.status}`
+      );
+
     }
 
     const xml = await response.text();
+
     const data = parser.parse(xml);
 
-    // RSS and Atom support
+    // RSS / Atom support
+
     let items =
       data?.rss?.channel?.item ||
       data?.feed?.entry ||
       [];
 
     if (!Array.isArray(items)) {
+
       items = items ? [items] : [];
+
     }
 
     return items.map(item => {
 
       let link = item.link;
 
-      if (typeof link === 'object' && link !== null) {
-        link = link['@_href'] || '';
+      if (Array.isArray(link)) {
+        link = link[0];
       }
 
+      if (typeof link === 'object' && link !== null) {
+
+        link =
+          link['@_href'] ||
+          link['#text'] ||
+          '';
+
+      }
+
+      const enclosure = item.enclosure;
+
       return {
+
         title: cleanText(item.title),
+
         url: cleanText(link),
+
         pubDate:
           item.pubDate ||
           item.published ||
           item.updated ||
+          item['dc:date'] ||
           '',
+
         image:
-          item.enclosure?.['@_url'] ||
+          enclosure?.['@_url'] ||
           item['media:content']?.['@_url'] ||
           '',
+
         description: cleanText(
           item.description ||
           item.summary ||
           item.content
         ),
+
         source: feed.name
+
       };
 
     }).filter(article =>
+
       article.title && article.url
+
     );
 
   } catch (error) {
@@ -347,28 +438,61 @@ async function fetchFromRSS(feed) {
     );
 
     return [];
+
   }
 }
 
 // ============================================
-// 11. FILTER ALL ARTICLES
+// 12. FILTER ALL NEWS
 // ============================================
 
 function filterArticles(allNews) {
 
   const unique = new Map();
 
+  let oldCount = 0;
+  let invalidCount = 0;
+  let nonMalayalamCount = 0;
+
   for (const article of allNews) {
 
-    if (!article.title || !article.url) continue;
+    if (!article.title || !article.url) {
 
-    if (!isValidUrl(article.url)) continue;
+      invalidCount++;
+
+      continue;
+
+    }
+
+    if (!isValidUrl(article.url)) {
+
+      invalidCount++;
+
+      continue;
+
+    }
 
     const date = getValidDate(article.pubDate);
 
-    if (!date) continue;
+    if (!date) {
 
-    if (!isKozhikodeNews(article)) continue;
+      oldCount++;
+
+      continue;
+
+    }
+
+    // മലയാളം വാർത്തകൾ മാത്രം
+    if (!isMalayalamNews(article)) {
+
+      nonMalayalamCount++;
+
+      continue;
+
+    }
+
+    // കോഴിക്കോട് വാർത്തയാണോ?
+    const isLocal = isKozhikodeNews(article);
 
     const id = crypto
       .createHash('sha256')
@@ -376,23 +500,59 @@ function filterArticles(allNews) {
       .digest('hex');
 
     if (!unique.has(id)) {
+
       unique.set(id, {
+
         ...article,
+
         publishedDate: date,
+
+        isKozhikode: isLocal,
+
         id
+
       });
+
     }
+
   }
 
-  return Array.from(unique.values())
-    .sort((a, b) =>
-      b.publishedDate - a.publishedDate
-    )
-    .slice(0, MAX_ARTICLES);
+  const results = Array.from(unique.values());
+
+  // കോഴിക്കോട് വാർത്തകൾ ആദ്യം
+  // മറ്റു വാർത്തകൾ പ്രസിദ്ധീകരണ തീയതി അനുസരിച്ച്
+
+  results.sort((a, b) => {
+
+    if (a.isKozhikode && !b.isKozhikode) {
+      return -1;
+    }
+
+    if (!a.isKozhikode && b.isKozhikode) {
+      return 1;
+    }
+
+    return b.publishedDate - a.publishedDate;
+
+  });
+
+  console.log('----------------------------');
+
+  console.log(`Old/Invalid date: ${oldCount}`);
+
+  console.log(`Invalid articles: ${invalidCount}`);
+
+  console.log(`Non-Malayalam: ${nonMalayalamCount}`);
+
+  console.log(`Valid articles: ${results.length}`);
+
+  console.log('----------------------------');
+
+  return results.slice(0, MAX_ARTICLES);
 }
 
 // ============================================
-// 12. SAVE TO FIREBASE
+// 13. SAVE TO FIREBASE
 // ============================================
 
 async function saveToFirebase(allNews) {
@@ -418,13 +578,20 @@ async function saveToFirebase(allNews) {
 
       url: article.url,
 
-      image: article.image,
+      image: article.image || '',
 
-      district: 'Kozhikode',
+      // യഥാർത്ഥ വാർത്തയുടെ ജില്ല
+      district: article.isKozhikode
+        ? 'Kozhikode'
+        : 'Other',
 
       language: 'ml',
 
-      category: 'local',
+      category: article.isKozhikode
+        ? 'local'
+        : 'general',
+
+      isKozhikode: article.isKozhikode,
 
       isPublished: true,
 
@@ -437,6 +604,7 @@ async function saveToFirebase(allNews) {
 
       fetchedAt:
         admin.firestore.FieldValue.serverTimestamp()
+
     };
 
     if (!docSnap.exists) {
@@ -449,53 +617,70 @@ async function saveToFirebase(allNews) {
     } else {
 
       updated++;
+
     }
 
-    await docRef.set(newsData, { merge: true });
+    await docRef.set(
+      newsData,
+      { merge: true }
+    );
+
   }
 
-  console.log('----------------------------');
+  console.log('============================');
+
   console.log(`New articles: ${added}`);
+
   console.log(`Updated articles: ${updated}`);
-  console.log('----------------------------');
+
+  console.log('============================');
 }
 
 // ============================================
-// 13. MAIN
+// 14. MAIN FUNCTION
 // ============================================
 
 async function main() {
 
   console.log('================================');
-  console.log('KOZHIKODE NEWS COLLECTOR');
-  console.log('48 Hour News Filter');
+
+  console.log('KOZHIKODE MALAYALAM NEWS COLLECTOR');
+
+  console.log('48 HOUR NEWS FILTER');
+
   console.log('================================');
 
   let combinedNews = [];
 
-  // Currents API
+  // 1. Currents API
+
   const apiNews = await fetchFromCurrentsAPI();
 
   combinedNews = combinedNews.concat(apiNews);
 
-  // RSS feeds
+  // 2. RSS Feeds
+
   for (const feed of FEEDS) {
 
     const rssNews = await fetchFromRSS(feed);
 
     combinedNews = combinedNews.concat(rssNews);
+
   }
 
   console.log(
     `Total fetched: ${combinedNews.length}`
   );
 
-  // Filter
+  // 3. Filter all news
+
   const filteredNews = filterArticles(combinedNews);
 
   console.log(
-    `Valid Kozhikode news (48h): ${filteredNews.length}`
+    `Final news count: ${filteredNews.length}`
   );
+
+  // 4. Save to Firebase
 
   if (filteredNews.length > 0) {
 
@@ -504,16 +689,23 @@ async function main() {
   } else {
 
     console.log(
-      'No fresh Malayalam Kozhikode news found.'
+      'No fresh Malayalam news found in the last 48 hours.'
     );
+
   }
 
   console.log('News collection completed.');
+
 }
+
+// ============================================
+// 15. START
+// ============================================
 
 main().catch(error => {
 
   console.error('Fatal Error:', error);
 
   process.exitCode = 1;
-}
+
+});
