@@ -4,42 +4,21 @@ const admin = require('firebase-admin');
 const { XMLParser } = require('fast-xml-parser');
 const crypto = require('crypto');
 
-// Firebase connection
 if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
   throw new Error('FIREBASE_SERVICE_ACCOUNT Secret missing!');
 }
 
-const serviceAccount = JSON.parse(
-  process.env.FIREBASE_SERVICE_ACCOUNT
-);
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
-
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 
-// മലയാളം വാർത്തകൾക്കുള്ള RSS ലിങ്കുകൾ
+// കൂടുതൽ വിശ്വസനീയമായ RSS ലിങ്കുകൾ
 const FEEDS = [
-  {
-    name: 'Mathrubhumi Kozhikode',
-    url: 'https://www.mathrubhumi.com/rss/district/kozhikode'
-  },
-  {
-    name: 'Asianet News',
-    url: 'https://www.asianetnews.com/rss/malayalam/kerala'
-  },
-  {
-    name: 'Oneindia Malayalam',
-    url: 'https://malayalam.oneindia.com/rss/feeds/malayalam-kozhikode-fb.xml'
-  }
+  { name: 'Manorama Online', url: 'https://www.manoramaonline.com/news/latest-news.rss' },
+  { name: 'Mathrubhumi Kozhikode', url: 'https://www.mathrubhumi.com/rss/district/kozhikode' }
 ];
 
-const parser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: '@_',
-  trimValues: true
-});
+const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_', trimValues: true });
 
 function cleanText(value) {
   if (!value) return '';
@@ -66,13 +45,11 @@ async function fetchFeed(feed) {
 
   try {
     const response = await fetch(feed.url, {
-      headers: { 'User-Agent': 'KozhikodeNewsBot/1.0' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
       signal: AbortSignal.timeout(20000)
     });
 
-    if (!response.ok) {
-      throw new Error(`RSS error: HTTP ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`RSS error: HTTP ${response.status}`);
 
     const xml = await response.text();
     const data = parser.parse(xml);
@@ -81,38 +58,25 @@ async function fetchFeed(feed) {
     let saved = 0;
     let skipped = 0;
     
-    // 📌 48 മണിക്കൂറിന് മുൻപുള്ള സമയം കണക്കാക്കുന്നു
-    const now = new Date();
-    const fortyEightHoursAgo = new Date(now.getTime() - (48 * 60 * 60 * 1000));
+    // 📌 കൃത്യമായി 48 മണിക്കൂർ (2 ദിവസം) മുൻപുള്ള സമയം കണക്കാക്കുന്നു
+    const fortyEightHoursAgo = new Date(Date.now() - (48 * 60 * 60 * 1000));
 
     for (const item of items) {
       const title = cleanText(item.title);
       const url = cleanText(item.link);
-
       if (!title || !url.startsWith('https://')) continue;
 
-      // 📌 വാർത്തയുടെ തീയതി പരിശോധിക്കുന്നു
       const date = item.pubDate ? new Date(item.pubDate) : new Date();
       
-      // പഴയ വാർത്തകളാണെങ്കിൽ (48 മണിക്കൂറിൽ കൂടുതൽ പഴക്കമുള്ളത്) ഒഴിവാക്കുക
+      // 48 മണിക്കൂറിൽ പഴയ വാർത്തകൾ ഒഴിവാക്കുന്നു
       if (!isNaN(date.getTime()) && date < fortyEightHoursAgo) {
         skipped++;
         continue; 
       }
 
-      const id = crypto
-        .createHash('sha256')
-        .update(url)
-        .digest('hex');
-
-      const image =
-        item.enclosure?.['@_url'] ||
-        item['media:content']?.['@_url'] ||
-        '';
-
-      const publishedAt = isNaN(date.getTime())
-        ? admin.firestore.Timestamp.now()
-        : admin.firestore.Timestamp.fromDate(date);
+      const id = crypto.createHash('sha256').update(url).digest('hex');
+      const image = item.enclosure?.['@_url'] || item['media:content']?.['@_url'] || '';
+      const publishedAt = isNaN(date.getTime()) ? admin.firestore.Timestamp.now() : admin.firestore.Timestamp.fromDate(date);
 
       await db.collection('news').doc(id).set({
         title,
