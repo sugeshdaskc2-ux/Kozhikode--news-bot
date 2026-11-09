@@ -13,20 +13,33 @@ if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
   throw new Error('FIREBASE_SERVICE_ACCOUNT Secret missing!');
 }
 
-const serviceAccount = JSON.parse(
-  process.env.FIREBASE_SERVICE_ACCOUNT
-);
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
 
 const db = admin.firestore();
-
 const API_KEY = process.env.CURRENTS_API_KEY;
 
 // ============================================
-// 2. XML PARSER
+// 2. CONFIG
+// ============================================
+
+// പഴയ 'local' category → 'kozhikode' ആക്കി migrate ചെയ്യാൻ
+const MIGRATE_OLD_CATEGORIES = true;
+
+const CATEGORY_TO_DISTRICT = {
+  kozhikode: 'Kozhikode',
+  kerala: 'Kerala',
+  national: 'India',
+  world: 'World',
+  traffic: 'Kozhikode',
+  weather: 'Kerala'
+};
+
+// ============================================
+// 3. XML PARSER
 // ============================================
 
 const parser = new XMLParser({
@@ -38,74 +51,63 @@ const parser = new XMLParser({
 });
 
 // ============================================
-// 3. RSS FEEDS
+// 4. RSS FEEDS (Mathrubhumi + മറ്റുള്ളവ)
 // ============================================
 
 const RSS_FEEDS = [
+  // ✅ Mathrubhumi — ഉറപ്പായും പ്രവർത്തിക്കുന്ന feed
   {
     name: 'Mathrubhumi',
-    url: 'https://www.mathrubhumi.com/rss/district/kozhikode'
+    url: 'https://www.mathrubhumi.com/sitemaps/mathrubhumi/rss',
+    category: 'kozhikode'
   },
-  {
-    name: 'Asianet News',
-    url: 'https://www.asianetnews.com/rss/malayalam/kerala'
-  },
+  // ✅ Kerala Kaumudi — Top Stories
   {
     name: 'Kerala Kaumudi',
-    url: 'https://www.keralakaumudi.com/rss/news'
+    url: 'https://keralakaumudi.com/rss/topstories',
+    category: 'kerala'
   },
+  // ✅ Kerala Kaumudi — Kerala section
+  {
+    name: 'Kerala Kaumudi (Kerala)',
+    url: 'https://keralakaumudi.com/rss/kerala',
+    category: 'kerala'
+  },
+  // ✅ Asianet News — നിലവിൽ പ്രവർത്തിക്കുന്നു
+  {
+    name: 'Asianet News',
+    url: 'https://www.asianetnews.com/rss/malayalam/kerala',
+    category: 'kerala'
+  },
+  // ✅ Oneindia Malayalam — ദേശീയ വാർത്തകൾ
   {
     name: 'Oneindia Malayalam',
-    url: 'https://malayalam.oneindia.com/rss/feeds/malayalam-news.xml'
+    url: 'https://malayalam.oneindia.com/rss/feeds/malayalam-news.xml',
+    category: 'national'
   }
 ];
 
 // ============================================
-// 4. YOUTUBE CHANNELS
+// 5. YOUTUBE CHANNELS
 // ============================================
 
 const YOUTUBE_CHANNELS = [
-  {
-    name: 'മനോരമ',
-    id: 'UCP0uG-mcMImgKnJz-VjJZmQ'
-  },
-  {
-    name: 'മാതൃഭൂമി',
-    id: 'UCwXrBBZnIh2ER4lal6WbAHw'
-  },
-  {
-    name: 'ഏഷ്യാനെറ്റ്',
-    id: 'UCf8w5m0YsRa8MHQ5bwSGmbw'
-  },
-  {
-    name: '24 News',
-    id: 'UCup3etEdjyF1L3sRbU-rKLw'
-  },
-  {
-    name: 'മറുനാടൻ മലയാളി',
-    id: 'UCpp_oKgF30vkhF1WDcX64mg'
-  },
-  {
-    name: 'MediaOne',
-    id: 'UC-f7r46JhYv78q5pGrO6ivA'
-  },
-  {
-    name: 'കേരള കൗമുദി',
-    id: 'UCY18ujuIEIqOBywA0RfbINQ'
-  }
+  { name: 'മനോരമ', id: 'UCP0uG-mcMImgKnJz-VjJZmQ' },
+  { name: 'മാതൃഭൂമി', id: 'UCwXrBBZnIh2ER4lal6WbAHw' },
+  { name: 'ഏഷ്യാനെറ്റ്', id: 'UCf8w5m0YsRa8MHQ5bwSGmbw' },
+  { name: '24 News', id: 'UCup3etEdjyF1L3sRbU-rKLw' },
+  { name: 'മറുനാടൻ മലയാളി', id: 'UCpp_oKgF30vkhF1WDcX64mg' },
+  { name: 'MediaOne', id: 'UC-f7r46JhYv78q5pGrO6ivA' },
+  { name: 'കേരള കൗമുദി', id: 'UCY18ujuIEIqOBywA0RfbINQ' }
 ];
 
 // ============================================
-// 5. COMMON HELPERS
+// 6. HELPERS
 // ============================================
 
 function cleanText(value) {
   if (!value) return '';
-
-  if (typeof value === 'object') {
-    value = value['#text'] || '';
-  }
-
+  if (typeof value === 'object') value = value['#text'] || '';
   return String(value)
     .replace(/<!\[CDATA\[|\]\]>/g, '')
     .replace(/<[^>]*>/g, ' ')
@@ -125,196 +127,110 @@ function toArray(value) {
 
 function getText(value) {
   if (!value) return '';
-
-  if (typeof value === 'string') {
-    return cleanText(value);
-  }
-
-  if (typeof value === 'object') {
-    return cleanText(value['#text'] || '');
-  }
-
+  if (typeof value === 'string') return cleanText(value);
+  if (typeof value === 'object') return cleanText(value['#text'] || '');
   return cleanText(value);
 }
 
 function getLink(value) {
   if (!value) return '';
-
   const links = toArray(value);
-
-  // Atom format
-  const alternate = links.find(
-    link => link?.['@_rel'] === 'alternate'
-  );
-
+  const alternate = links.find(l => l?.['@_rel'] === 'alternate');
   const selected = alternate || links[0];
-
-  if (typeof selected === 'string') {
-    return selected;
-  }
-
+  if (typeof selected === 'string') return selected;
   return selected?.['@_href'] || '';
 }
 
 function getImage(item) {
   if (!item) return '';
-
-  // RSS enclosure
-  if (item.enclosure?.['@_url']) {
-    return item.enclosure['@_url'];
-  }
-
-  // Media RSS thumbnail
+  if (item.enclosure?.['@_url']) return item.enclosure['@_url'];
   const mediaGroup = item['media:group'];
-
   if (mediaGroup?.['media:thumbnail']) {
-    const thumbnail = toArray(
-      mediaGroup['media:thumbnail']
-    )[0];
-
-    if (thumbnail?.['@_url']) {
-      return thumbnail['@_url'];
-    }
+    const t = toArray(mediaGroup['media:thumbnail'])[0];
+    if (t?.['@_url']) return t['@_url'];
   }
-
-  // Direct media thumbnail
-  if (item['media:thumbnail']?.['@_url']) {
-    return item['media:thumbnail']['@_url'];
-  }
-
+  if (item['media:thumbnail']?.['@_url']) return item['media:thumbnail']['@_url'];
   return '';
 }
 
 // ============================================
-// 6. CATEGORY DETECTION
+// 7. CATEGORY DETECTION (FIXED)
 // ============================================
 
 function determineCategory(title, description) {
-  const text = (
-    (title || '') + ' ' + (description || '')
-  ).toLowerCase();
+  const text = ((title || '') + ' ' + (description || '')).toLowerCase();
 
-  // Kozhikode local news
+  // കോഴിക്കോട് ലോക്കൽ
   if (
-    text.includes('kozhikode') ||
-    text.includes('calicut') ||
-    text.includes('കോഴിക്കോട്') ||
-    text.includes('വടകര') ||
-    text.includes('കൊയിലാണ്ടി') ||
-    text.includes('ബേപ്പൂർ') ||
-    text.includes('ഫറോക്ക്')
-  ) {
-    return 'local';
-  }
+    text.includes('kozhikode') || text.includes('calicut') ||
+    text.includes('കോഴിക്കോട്') || text.includes('വടകര') ||
+    text.includes('കൊയിലാണ്ടി') || text.includes('ബേപ്പൂർ') ||
+    text.includes('ഫറോക്ക്') || text.includes('രാമനാട്ടുകര') ||
+    text.includes('താമരശ്ശേരി') || text.includes('കൊടുവള്ളി')
+  ) return 'kozhikode';
 
-  // Kerala news
+  // കേരളം
   if (
-    text.includes('kerala') ||
-    text.includes('കേരളം') ||
-    text.includes('തിരുവനന്തപുരം') ||
-    text.includes('കൊച്ചി') ||
-    text.includes('കണ്ണൂർ') ||
-    text.includes('മലപ്പുറം') ||
-    text.includes('തൃശൂർ')
-  ) {
-    return 'kerala';
-  }
+    text.includes('kerala') || text.includes('കേരളം') ||
+    text.includes('തിരുവനന്തപുരം') || text.includes('കൊച്ചി') ||
+    text.includes('കണ്ണൂർ') || text.includes('മലപ്പുറം') ||
+    text.includes('തൃശൂർ') || text.includes('കോട്ടയം')
+  ) return 'kerala';
 
-  // Sports
+  // ലോകം
   if (
-    text.includes('sports') ||
-    text.includes('cricket') ||
-    text.includes('football') ||
-    text.includes('കായികം') ||
-    text.includes('ക്രിക്കറ്റ്') ||
-    text.includes('ഫുട്ബോൾ')
-  ) {
-    return 'sports';
-  }
+    text.includes('world') || text.includes('international') ||
+    text.includes('ലോകം') || text.includes('അന്താരാഷ്ട്രം')
+  ) return 'world';
 
-  // Entertainment
+  // ട്രാഫിക്
   if (
-    text.includes('cinema') ||
-    text.includes('movie') ||
-    text.includes('entertainment') ||
-    text.includes('സിനിമ') ||
-    text.includes('ചലച്ചിത്രം')
-  ) {
-    return 'entertainment';
-  }
+    text.includes('traffic') || text.includes('ഗതാഗതം') ||
+    text.includes('അപകടം') || text.includes('accident') ||
+    text.includes('റോഡ് അടച്ചു')
+  ) return 'traffic';
+
+  // കാലാവസ്ഥ
+  if (
+    text.includes('weather') || text.includes('കാലാവസ്ഥ') ||
+    text.includes('മഴ') || text.includes('rain') ||
+    text.includes('cyclone') || text.includes('ചുഴലിക്കാറ്റ്')
+  ) return 'weather';
 
   return 'national';
 }
 
 // ============================================
-// 7. DATE PARSER
+// 8. DATE / URL HELPERS
 // ============================================
 
 function parseArticleDate(value) {
   if (!value) return null;
-
   const date = new Date(value);
-
-  if (isNaN(date.getTime())) {
-    return null;
-  }
-
-  return date;
+  return isNaN(date.getTime()) ? null : date;
 }
-
-// ============================================
-// 8. NORMALIZE URL
-// ============================================
 
 function normalizeUrl(value) {
   if (!value) return '';
-
   try {
     const url = new URL(value);
-
-    // YouTube video URL normalization
-    if (
-      url.hostname.includes('youtube.com') ||
-      url.hostname.includes('youtu.be')
-    ) {
+    if (url.hostname.includes('youtube.com') || url.hostname.includes('youtu.be')) {
       let videoId = '';
-
-      if (url.hostname.includes('youtu.be')) {
-        videoId = url.pathname.split('/')[1] || '';
-      } else {
-        videoId =
-          url.searchParams.get('v') ||
-          url.pathname.split('/').filter(Boolean).pop() ||
-          '';
-      }
-
-      if (videoId) {
-        return `https://www.youtube.com/watch?v=${videoId}`;
-      }
+      if (url.hostname.includes('youtu.be')) videoId = url.pathname.split('/')[1] || '';
+      else videoId = url.searchParams.get('v') || url.pathname.split('/').filter(Boolean).pop() || '';
+      if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
     }
-
-    // Remove common tracking parameters
-    [
-      'utm_source',
-      'utm_medium',
-      'utm_campaign',
-      'utm_term',
-      'utm_content',
-      'fbclid',
-      'gclid'
-    ].forEach(key => url.searchParams.delete(key));
-
+    ['utm_source','utm_medium','utm_campaign','utm_term','utm_content','fbclid','gclid']
+      .forEach(k => url.searchParams.delete(k));
     url.hash = '';
-
     return url.toString();
-
   } catch (e) {
     return value.trim();
   }
 }
 
 // ============================================
-// 9. FETCH HELPER
+// 9. FETCH HELPERS
 // ============================================
 
 async function fetchXML(url) {
@@ -325,39 +241,25 @@ async function fetchXML(url) {
     },
     signal: AbortSignal.timeout(15000)
   });
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return await response.text();
 }
 
 // ============================================
-// 10. RSS + ATOM FETCH
+// 10. RSS FETCH
 // ============================================
 
 async function fetchFromRSS() {
   let allNews = [];
-
   for (const feed of RSS_FEEDS) {
     try {
       console.log(`📡 Checking RSS: ${feed.name}`);
-
       const xml = await fetchXML(feed.url);
       const data = parser.parse(xml);
 
       let items = [];
-
-      // Standard RSS
-      if (data?.rss?.channel?.item) {
-        items = toArray(data.rss.channel.item);
-      }
-
-      // Atom feed
-      else if (data?.feed?.entry) {
-        items = toArray(data.feed.entry);
-      }
+      if (data?.rss?.channel?.item) items = toArray(data.rss.channel.item);
+      else if (data?.feed?.entry) items = toArray(data.feed.entry);
 
       if (!items.length) {
         console.log(`⚠️ No RSS items: ${feed.name}`);
@@ -366,24 +268,9 @@ async function fetchFromRSS() {
 
       const list = items.map(item => {
         const title = getText(item.title);
-
-        const link =
-          item.link?.['@_href']
-            ? getLink(item.link)
-            : getText(item.link);
-
-        const pubDate =
-          item.pubDate ||
-          item.published ||
-          item.updated ||
-          item['dc:date'] ||
-          '';
-
-        const description =
-          getText(item.description) ||
-          getText(item.summary) ||
-          getText(item.content);
-
+        const link = item.link?.['@_href'] ? getLink(item.link) : getText(item.link);
+        const pubDate = item.pubDate || item.published || item.updated || item['dc:date'] || '';
+        const description = getText(item.description) || getText(item.summary) || getText(item.content);
         return {
           title,
           url: link,
@@ -391,92 +278,56 @@ async function fetchFromRSS() {
           image: getImage(item),
           description,
           source: feed.name,
+          category: feed.category || null,
           isVideo: false
         };
-
       }).filter(item => item.title && item.url);
 
-      console.log(
-        `✅ ${feed.name}: ${list.length} articles`
-      );
-
+      console.log(`✅ ${feed.name}: ${list.length} articles`);
       allNews = allNews.concat(list);
 
     } catch (e) {
-      console.log(
-        `❌ RSS ${feed.name} error: ${e.message}`
-      );
+      console.log(`❌ RSS ${feed.name} error: ${e.message}`);
     }
   }
-
   return allNews;
 }
 
 // ============================================
-// 11. YOUTUBE VIDEO FETCH
+// 11. YOUTUBE FETCH
 // ============================================
 
 async function fetchFromYouTube() {
   let allVideos = [];
-
   for (const channel of YOUTUBE_CHANNELS) {
     try {
-      console.log(
-        `▶️ Checking YouTube: ${channel.name}`
-      );
-
-      const url =
-        `https://www.youtube.com/feeds/videos.xml?channel_id=${channel.id}`;
-
+      console.log(`▶️ Checking YouTube: ${channel.name}`);
+      const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${channel.id}`;
       const xml = await fetchXML(url);
       const data = parser.parse(xml);
-
-      const entries = toArray(
-        data?.feed?.entry
-      );
-
+      const entries = toArray(data?.feed?.entry);
       if (!entries.length) {
-        console.log(
-          `⚠️ No YouTube videos: ${channel.name}`
-        );
+        console.log(`⚠️ No YouTube videos: ${channel.name}`);
         continue;
       }
 
-      const list = entries.map(video => {
-        return {
-          title: getText(video.title),
+      const list = entries.map(video => ({
+        title: getText(video.title),
+        url: getLink(video.link),
+        pubDate: video.published || video.updated || '',
+        image: getImage(video),
+        description: '',
+        source: channel.name,
+        category: 'kerala',
+        isVideo: true
+      })).filter(v => v.title && v.url);
 
-          url: getLink(video.link),
-
-          pubDate:
-            video.published ||
-            video.updated ||
-            '',
-
-          image: getImage(video),
-
-          description: '',
-
-          source: channel.name,
-
-          isVideo: true
-        };
-
-      }).filter(video => video.title && video.url);
-
-      console.log(
-        `✅ ${channel.name}: ${list.length} videos`
-      );
-
+      console.log(`✅ ${channel.name}: ${list.length} videos`);
       allVideos = allVideos.concat(list);
-
     } catch (e) {
-      console.log(
-        `❌ YouTube ${channel.name} error: ${e.message}`
-      );
+      console.log(`❌ YouTube ${channel.name} error: ${e.message}`);
     }
   }
-
   return allVideos;
 }
 
@@ -485,73 +336,35 @@ async function fetchFromYouTube() {
 // ============================================
 
 async function fetchFromCurrents() {
-  if (!API_KEY) {
-    console.log('⚠️ Currents API key not configured');
-    return [];
-  }
-
+  if (!API_KEY) { console.log('⚠️ Currents API key not configured'); return []; }
   try {
     console.log('🌐 Checking Currents API');
-
-    const url =
-      'https://api.currentsapi.services/v1/latest-news?language=ml&country=IN&page_size=20';
-
+    const url = 'https://api.currentsapi.services/v1/latest-news?language=ml&country=IN&page_size=20';
     const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${API_KEY}`
-      },
+      headers: { 'Authorization': `Bearer ${API_KEY}` },
       signal: AbortSignal.timeout(15000)
     });
-
-    if (!response.ok) {
-      console.log(
-        `❌ Currents HTTP ${response.status}`
-      );
-
-      return [];
-    }
-
+    if (!response.ok) { console.log(`❌ Currents HTTP ${response.status}`); return []; }
     const data = await response.json();
-
-    if (data.status !== 'ok' || !data.news) {
-      console.log('⚠️ Currents returned no news');
-      return [];
-    }
-
-    const list = data.news.map(article => ({
-      title: cleanText(article.title),
-
-      url: article.url,
-
-      pubDate: article.published,
-
-      image: article.image || '',
-
-      description: cleanText(article.description || ''),
-
-      source: article.author || 'Currents',
-
+    if (data.status !== 'ok' || !data.news) { console.log('⚠️ Currents returned no news'); return []; }
+    return data.news.map(a => ({
+      title: cleanText(a.title),
+      url: a.url,
+      pubDate: a.published,
+      image: a.image || '',
+      description: cleanText(a.description || ''),
+      source: a.author || 'Currents',
+      category: null,
       isVideo: false
-
-    })).filter(article => article.title && article.url);
-
-    console.log(
-      `✅ Currents: ${list.length} articles`
-    );
-
-    return list;
-
+    })).filter(a => a.title && a.url);
   } catch (e) {
-    console.log(
-      `❌ Currents error: ${e.message}`
-    );
-
+    console.log(`❌ Currents error: ${e.message}`);
     return [];
   }
 }
 
 // ============================================
-// 13. MALAYALAM TRANSLATION
+// 13. TRANSLATION
 // ============================================
 
 function containsMalayalam(text) {
@@ -560,29 +373,48 @@ function containsMalayalam(text) {
 
 async function translateToMalayalam(text) {
   if (!text) return '';
-
-  if (containsMalayalam(text)) {
-    return text;
-  }
-
+  if (containsMalayalam(text)) return text;
   try {
-    const result = await translate(text, {
-      to: 'ml'
-    });
-
+    const result = await translate(text, { to: 'ml' });
     return result.text || text;
-
   } catch (e) {
-    console.log(
-      `⚠️ Translation failed: ${e.message}`
-    );
-
+    console.log(`⚠️ Translation failed: ${e.message}`);
     return text;
   }
 }
 
 // ============================================
-// 14. MAIN PROCESS
+// 14. MIGRATE OLD CATEGORIES
+// ============================================
+
+async function migrateOldCategories() {
+  if (!MIGRATE_OLD_CATEGORIES) return;
+  console.log('🔧 Checking for old categories to migrate...');
+  try {
+    const snap = await db.collection('news')
+      .where('category', '==', 'local')
+      .get();
+    if (snap.empty) {
+      console.log('✅ No old "local" categories found.');
+      return;
+    }
+    const batch = db.batch();
+    snap.forEach(doc => {
+      batch.update(doc.ref, {
+        category: 'kozhikode',
+        district: 'Kozhikode',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    await batch.commit();
+    console.log(`✅ Migrated ${snap.size} docs: local → kozhikode`);
+  } catch (e) {
+    console.log(`⚠️ Migration error: ${e.message}`);
+  }
+}
+
+// ============================================
+// 15. MAIN
 // ============================================
 
 async function main() {
@@ -590,142 +422,69 @@ async function main() {
   console.log('🚀 NEWS FETCH STARTED');
   console.log('================================');
 
+  // പഴയ 'local' category migrate ചെയ്യുക
+  await migrateOldCategories();
+
   let allArticles = [];
-
-  // RSS
-  const rssNews = await fetchFromRSS();
-  allArticles = allArticles.concat(rssNews);
-
-  // YouTube
-  const youtubeNews = await fetchFromYouTube();
-  allArticles = allArticles.concat(youtubeNews);
-
-  // Currents
-  const currentsNews = await fetchFromCurrents();
-  allArticles = allArticles.concat(currentsNews);
+  allArticles = allArticles.concat(await fetchFromRSS());
+  allArticles = allArticles.concat(await fetchFromYouTube());
+  allArticles = allArticles.concat(await fetchFromCurrents());
 
   console.log('--------------------------------');
-  console.log(`RSS: ${rssNews.length}`);
-  console.log(`YouTube: ${youtubeNews.length}`);
-  console.log(`Currents: ${currentsNews.length}`);
-  console.log(`Total: ${allArticles.length}`);
+  console.log(`Total fetched: ${allArticles.length}`);
   console.log('--------------------------------');
 
-  let saved = 0;
-  let skipped = 0;
-  let failed = 0;
-
-  const fortyEightHoursAgo = new Date(
-    Date.now() - 48 * 60 * 60 * 1000
-  );
+  let saved = 0, skipped = 0, failed = 0;
+  const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
   for (const article of allArticles) {
     try {
-      if (
-        !article.title ||
-        !article.url ||
-        !article.pubDate
-      ) {
-        skipped++;
-        continue;
-      }
-
+      if (!article.title || !article.url || !article.pubDate) { skipped++; continue; }
       const date = parseArticleDate(article.pubDate);
-
-      if (!date || date < fortyEightHoursAgo) {
-        skipped++;
-        continue;
-      }
+      if (!date || date < fortyEightHoursAgo) { skipped++; continue; }
 
       const normalizedUrl = normalizeUrl(article.url);
+      if (!normalizedUrl) { skipped++; continue; }
 
-      if (!normalizedUrl) {
-        skipped++;
-        continue;
-      }
-
-      // Translate English title and description
       let finalTitle = article.title;
       let finalDesc = article.description || '';
 
-      if (!containsMalayalam(finalTitle)) {
-        finalTitle = await translateToMalayalam(finalTitle);
-      }
+      if (!containsMalayalam(finalTitle)) finalTitle = await translateToMalayalam(finalTitle);
+      if (finalDesc && !containsMalayalam(finalDesc)) finalDesc = await translateToMalayalam(finalDesc);
 
-      if (
-        finalDesc &&
-        !containsMalayalam(finalDesc)
-      ) {
-        finalDesc = await translateToMalayalam(finalDesc);
-      }
+      const language = containsMalayalam(finalTitle) ? 'ml' : 'en';
 
-      // Actual language detection
-      const language = containsMalayalam(finalTitle)
-        ? 'ml'
-        : 'en';
-
-      // URL-based duplicate protection
-      const id = crypto
-        .createHash('sha256')
-        .update(normalizedUrl)
-        .digest('hex');
-
+      const id = crypto.createHash('sha256').update(normalizedUrl).digest('hex');
       const docRef = db.collection('news').doc(id);
-
       const docSnap = await docRef.get();
 
-      if (docSnap.exists) {
-        skipped++;
-        continue;
-      }
+      if (docSnap.exists) { skipped++; continue; }
 
-      const category = determineCategory(
-        finalTitle,
-        finalDesc
-      );
+      const category = article.category || determineCategory(finalTitle, finalDesc);
+      const district = CATEGORY_TO_DISTRICT[category] || 'Kozhikode';
 
       await docRef.set({
         title: finalTitle,
-
         description: finalDesc,
-
         source: article.source,
-
         url: article.url,
-
         image: article.image || '',
-
         isVideo: Boolean(article.isVideo),
-
-        district: 'Kozhikode',
-
+        district: district,
         language: language,
-
         category: category,
-
         isPublished: true,
-
         isDeleted: false,
-
-        publishedAt:
-          admin.firestore.Timestamp.fromDate(date),
-
-        createdAt:
-          admin.firestore.FieldValue.serverTimestamp()
+        publishedAt: admin.firestore.Timestamp.fromDate(date),
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
       });
 
       saved++;
-
-      console.log(
-        `✅ Saved: ${article.source} - ${finalTitle.slice(0, 60)}`
-      );
+      console.log(`✅ Saved: ${article.source} — ${finalTitle.slice(0, 60)} [${category}]`);
 
     } catch (e) {
       failed++;
-
-      console.log(
-        `❌ Article save error: ${e.message}`
-      );
+      console.log(`❌ Article save error: ${e.message}`);
     }
   }
 
@@ -738,7 +497,7 @@ async function main() {
 }
 
 // ============================================
-// 15. EXECUTION
+// 16. EXECUTION
 // ============================================
 
 main().catch(error => {
