@@ -23,7 +23,7 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        run: npm install firebase-admin fast-xml-parser
+        run: npm install firebase-admin fast-xml-parser @vitalets/google-translate-api
 
       - name: Fetch Malayalam news
         run: node fetch-news.js
